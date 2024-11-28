@@ -253,3 +253,82 @@ def _convert_sklearn_params_to_optuna(param_grid: dict) -> dict:
             except Exception as e:
                 raise ValueError(f"Conversion failed for parameter {key}: {e}")
         return optuna_params
+
+def unpack_config(component):
+    """
+    Unpack a component from a config dictionary.
+    Dictionaries are unpacked in a recursive manner.
+    Lists are unpacked if they contain dictionaries.
+
+    Format of the component dictionary:
+    {
+        "from": "package.module", # The package and module where the class is located.
+        "name": "ClassName",      # The name of the class.
+        "instantiate": True,      # Whether to instantiate the class or not.
+        "parameters": {           # The parameters to pass to the class.
+            "param1": value1,
+            "param2": value2,
+            ...
+        }
+    will be unpacked to:
+    package.module.ClassName(param1=value1, param2=value2, ...)
+    If instantiate is False, the class itself will be returned without instantiation.
+
+    Parameters
+    ----------
+    component : dict
+        Dictionary containing the component information.
+
+    Returns
+    -------
+    instance : object
+        The instance of the component.
+    """
+    mod = __import__(component["from"], fromlist=[component["name"]])
+    instance = getattr(mod, component["name"])
+    instantiate = component.get("instantiate", True)
+    if instantiate:
+        params = component.get("parameters", {})
+        for p, v in params.items():
+            if isinstance(v, dict):
+                params[p] = unpack_config(v)
+            if isinstance(v, list):
+                for i, item in enumerate(v):
+                    if isinstance(item, dict):
+                        v[i] = unpack_config(item)
+        instance = instance(**params)
+    return instance
+
+def create_EEGClassifier_pipeline_from_config(config_file, n_classes=None):
+    from sklearn.pipeline import make_pipeline
+    import yaml
+    """
+    Create a pipeline from a configuration file that uses braindecode components.
+
+    Parameters
+    ----------
+    config_file : Path
+        Path to the configuration file.
+
+    Returns
+    -------
+    pipeline : dict
+        Dictionary with the pipeline name as key and the pipeline as value.
+    """
+    assert config_file.suffix == ".yml", "Config file must be a yaml file."
+    with open(config_file, "r") as _file:
+        content = _file.read()
+        config_dict = yaml.load(content, Loader=yaml.FullLoader)
+
+    pipe_configs = config_dict["pipeline"]
+    ## Clumsy way to set the number of outputs in the EEGClassifier
+    # Would be better that braindecode's EEGClassifier could take classes as input
+    # or that their handling of Datasets was more flexible. They could just read from given y!
+    if n_classes is not None:
+        for component in pipe_configs:
+            if component["name"] == "EEGClassifier":
+                component["parameters"]["module__n_outputs"] = n_classes
+    pipe_name = config_dict.get("name", "EEGClassifier")
+    components = [unpack_config(component) for component in pipe_configs]
+    pipeline = {pipe_name: make_pipeline(*components)}
+    return pipeline

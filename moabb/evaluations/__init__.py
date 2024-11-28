@@ -8,5 +8,11 @@ from .evaluations import (
     CrossSessionEvaluation,
     CrossSubjectEvaluation,
     WithinSessionEvaluation,
+    MixedSubjectsEvaluation,
+)
+
+from .evaluations_single import (
+    CrossSubjectSingleEvaluation,
+    MixedSubjectSingleEvaluation
 )
 from .utils import create_save_path, save_model_cv, save_model_list

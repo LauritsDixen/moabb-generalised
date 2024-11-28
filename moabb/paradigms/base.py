@@ -9,6 +9,11 @@ import pandas as pd
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import FunctionTransformer
 
+from torcheeg.io.eeg_signal import EEGSignalIO
+from mne import get_config
+from pathlib import Path
+from tqdm import tqdm
+
 from moabb.datasets.base import BaseDataset
 from moabb.datasets.bids_interface import StepType
 from moabb.datasets.preprocessing import (
@@ -530,10 +535,45 @@ class BaseParadigm(BaseProcessing):
         """Property that defines scoring metric (e.g. ROC-AUC or accuracy
         or f-score), given as a sklearn-compatible string or a compatible
         sklearn scorer.
-
         """
         pass
-
+    
     def _get_events_pipeline(self, dataset):
         event_id = self.used_events(dataset)
         return RawToEvents(event_id=event_id, interval=dataset.interval)
+    
+    ## TODO: make metadata .tsv
+    def run_cache(self, dataset, subjects, postprocess_pipeline):
+        cache_path = Path(get_config('MNE_DATA')) / dataset.code / type(self).__name__
+        
+        self.io = EEGSignalIO(io_path=str(cache_path), io_mode='lmdb')
+
+        if not cache_path.exists():
+            cache_path.mkdir(parents=True, exist_ok=True)
+            self.cache_data(cache_path, dataset, subjects, postprocess_pipeline)
+        return cache_path
+
+    def cache_data(self, cache_path, dataset, subjects, postprocess_pipeline):
+        if subjects is None:
+            subjects = dataset.subject_list
+        
+        print([(f"{dataset.subject_map[s]}:{s}") for s in subjects])
+        idx = 0
+        for subject in tqdm(subjects):
+            x, y, metadata = self.get_data(dataset, subjects=[subject], postprocess_pipeline=postprocess_pipeline)
+            metadata['label'] = y
+            metadata.to_csv(cache_path / f'sub-{subject}.csv')
+            for trial in x:
+                self.io.write_eeg(trial, str(idx))
+                idx += 1
+            del x, y, metadata
+        
+        metadata_all = []
+        for s in subjects:
+            metafile = cache_path / f'sub-{s}.csv'
+            metadata_all.append(pd.read_csv(metafile))
+            metafile.unlink()
+
+        metadata = pd.concat(metadata_all)
+        metadata.to_csv(cache_path / 'metadata.csv', index=False)
+        print("Done caching data")

@@ -21,6 +21,8 @@ try:
 except ImportError:
     _carbonfootprint = False
 
+_carbonfootprint = False
+
 
 def get_string_rep(obj):
     if issubclass(type(obj), BaseEstimator):
@@ -79,8 +81,8 @@ class Results:
         from moabb.evaluations.base import BaseEvaluation
         from moabb.paradigms.base import BaseParadigm
 
-        assert issubclass(evaluation_class, BaseEvaluation)
-        assert issubclass(paradigm_class, BaseParadigm)
+        # assert issubclass(evaluation_class, BaseEvaluation), f"got class: {evaluation_class}"
+        # assert issubclass(paradigm_class, BaseParadigm)
 
         if additional_columns is None:
             self.additional_columns = []

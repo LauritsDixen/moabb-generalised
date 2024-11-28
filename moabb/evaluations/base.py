@@ -247,7 +247,7 @@ class BaseEvaluation(ABC):
     def push_result(self, res, pipelines, process_pipeline):
         message = "{} | ".format(res["pipeline"])
         message += "{} | {} | {}".format(
-            res["dataset"].code, res["subject"], res["session"]
+            res["dataset"], res["subject"], res["session"] # used to be res["dataset"].code
         )
         message += ": Score %.3f" % res["score"]
         log.info(message)

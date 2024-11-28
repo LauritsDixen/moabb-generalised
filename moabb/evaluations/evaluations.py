@@ -10,6 +10,7 @@ from sklearn.metrics import get_scorer
 from sklearn.model_selection import (
     GroupKFold,
     LeaveOneGroupOut,
+    ShuffleSplit,
     StratifiedKFold,
     StratifiedShuffleSplit,
     cross_validate,
@@ -29,11 +30,168 @@ try:
 except ImportError:
     _carbonfootprint = False
 
+_carbonfootprint = False
+
 log = logging.getLogger(__name__)
 
 # Numpy ArrayLike is only available starting from Numpy 1.20 and Python 3.8
 Vector = Union[list, tuple, np.ndarray]
 
+
+class MixedSubjectsEvaluation(BaseEvaluation):
+    """Performance evaluation crossing subjects and sessions (k-fold cross-validation)
+
+    Parameters
+    ----------
+    n_perms :
+        Number of permutations to perform. If an array
+        is passed it has to be equal in size to the data_size array.
+        Values in this array must be monotonically decreasing (performing
+        more permutations for more data is not useful to reduce standard
+        error of the mean).
+        Default: None
+    paradigm : Paradigm instance
+        The paradigm to use.
+    datasets : List of Dataset instance
+        The list of dataset to run the evaluation. If none, the list of
+        compatible dataset will be retrieved from the paradigm instance.
+    random_state: int, RandomState instance, default=None
+        If not None, can guarantee same seed for shuffling examples.
+    n_jobs: int, default=1
+        Number of jobs for fitting of pipeline.
+    overwrite: bool, default=False
+        If true, overwrite the results.
+    error_score: "raise" or numeric, default="raise"
+        Value to assign to the score if an error occurs in estimator fitting. If set to
+        'raise', the error is raised.
+    suffix: str
+        Suffix for the results file.
+    hdf5_path: str
+        Specific path for storing the results and models.
+    additional_columns: None
+        Adding information to results.
+    return_epochs: bool, default=False
+        use MNE epoch to train pipelines.
+    return_raws: bool, default=False
+        use MNE raw to train pipelines.
+    mne_labels: bool, default=False
+        if returning MNE epoch, use original dataset label if True
+    """
+
+    def __init__(self,**kwargs):
+        super().__init__(**kwargs, additional_columns=["cross_fold", "n_test_samples"])
+
+    def evaluate(
+        self, dataset, pipelines, param_grid, process_pipeline, postprocess_pipeline=None
+    ):
+
+        # get the data
+        X, y, metadata = self.paradigm.get_data(
+            dataset=dataset,
+            return_epochs=self.return_epochs,
+            return_raws=self.return_raws,
+            cache_config=self.cache_config,
+            postprocess_pipeline=postprocess_pipeline,
+        )
+
+        # encode labels
+        le = LabelEncoder()
+        y = y if self.mne_labels else le.fit_transform(y)
+
+        # extract metadata
+        subjects = metadata.subject.values
+        sessions = metadata.session.values
+
+        scorer = get_scorer(self.paradigm.scoring)
+
+        # perform leave one subject out CV
+        n_splits = 1 if self.n_splits is None else self.n_splits
+        # for subj in np.unique(subjects):
+        #     cv = StratifiedShuffleSplit
+        cv = ShuffleSplit(n_splits=n_splits, test_size=0.2) # StratifiedShuffleSplit for each subject
+
+        # Progressbar at subject level
+        for cv_ind, (train, test) in enumerate(
+            tqdm(
+                cv.split(X, y),
+                total=self.n_splits,
+                desc=f"{dataset.code}-AllRuns",
+            )
+        ):
+
+            for name, clf in pipelines.items():
+                t_start = time()
+                model = deepcopy(clf).fit(X[train], y[train])
+                duration = time() - t_start
+
+                if self.hdf5_path is not None and self.save_model:
+                    model_save_path = create_save_path(
+                        hdf5_path=self.hdf5_path,
+                        code=dataset.code,
+                        subject="mixed",
+                        session="",
+                        name=name+"_"+self.suffix,
+                        grid=False,
+                        eval_type="AllRuns",
+                    )
+                    save_model_cv(
+                        model=model, save_path=model_save_path, cv_index=str(cv_ind)
+                    )
+                # eval on each session and subject
+                for subject in np.unique(subjects[test]):
+                    for session in np.unique(sessions[test]):
+                        ix = sessions[test] == session
+                        score = _score(
+                            estimator=model,
+                            X_test=X[test[ix]],
+                            y_test=y[test[ix]],
+                            scorer=scorer,
+                            score_params={},
+                        )
+
+                        nchan = X.info["nchan"] if isinstance(X, BaseEpochs) else X.shape[1]
+                        res = {
+                            "time": duration,
+                            "dataset": dataset,
+                            "subject": subject,
+                            "session": session,
+                            "score": score,
+                            "n_samples": len(train),
+                            "n_test_samples": len(test[ix]),
+                            "n_channels": nchan,
+                            "cross_fold": cv_ind,
+                            "pipeline": name,
+                        }
+
+                        yield res
+                # eval on all sessions and subject 
+                ix = np.ones(len(test), dtype=bool)
+                score = _score(
+                    estimator=model,
+                    X_test=X[test[ix]],
+                    y_test=y[test[ix]],
+                    scorer=scorer,
+                    score_params={},
+                )
+
+                nchan = X.info["nchan"] if isinstance(X, BaseEpochs) else X.shape[1]
+                res = {
+                    "time": duration,
+                    "dataset": dataset,
+                    "subject": "mixed",
+                    "session": "mixed",
+                    "score": score,
+                    "n_samples": len(train),
+                    "n_test_samples": len(test),
+                    "n_channels": nchan,
+                    "cross_fold": cv_ind,
+                    "pipeline": name,
+                }
+
+                yield res
+
+    def is_valid(self, dataset):
+        return len(dataset.subject_list) > 1
 
 class WithinSessionEvaluation(BaseEvaluation):
     """Performance evaluation within session (k-fold cross-validation)
@@ -780,3 +938,4 @@ class CrossSubjectEvaluation(BaseEvaluation):
 
     def is_valid(self, dataset):
         return len(dataset.subject_list) > 1
+

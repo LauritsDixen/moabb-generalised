@@ -1,0 +1,76 @@
+name: ShallowFSCBPNet
+
+paradigms:
+  - LeftRightImagery
+  - MotorImagery
+  - DiscreteEmotions
+
+citations:
+  - https://doi.org/10.1109/ACCESS.2020.2988523
+  - https://doi.org/10.1109/ACCESS.2020.2988523
+
+pipeline:
+
+  - name: EEGClassifier
+    from: braindecode.classifier
+    parameters:
+      ## Device
+      device: mps
+      verbose: 1
+
+      ## Hyper parameters
+      max_epochs: 1
+      batch_size: 128
+
+      ## Data split
+      train_split: 
+        name: ValidSplit
+        from: skorch.dataset
+        parameters:
+          cv: 0.2
+          random_state: 42
+          stratified: True
+
+      ## Optimizer
+      optimizer:
+        name: Adam
+        from: torch.optim
+        instantiate: False
+
+      optimizer__lr: 0.01
+
+      criterion:
+        name: CrossEntropyLoss
+        from: torch.nn.modules.loss
+        instantiate: False
+
+      ## Model
+      module: 
+        name: ShallowFBCSPNet
+        from: braindecode.models
+        instantiate: False
+      
+      module__n_outputs: 2
+      module__final_conv_length: auto
+
+      ## Callbacks in list format
+      callbacks:
+        - name: EpochScoring
+          from: skorch.callbacks
+          parameters:
+            scoring: accuracy
+            on_train: True
+            name: train_acc
+            lower_is_better: False
+        - name: EpochScoring
+          from: skorch.callbacks
+          parameters:
+            scoring: accuracy
+            on_train: False
+            name: valid_acc
+            lower_is_better: False
+
+
+
+
+      

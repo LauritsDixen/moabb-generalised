@@ -6,6 +6,7 @@ from warnings import warn
 
 import mne
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import FunctionTransformer, Pipeline
 
@@ -118,6 +119,38 @@ class RawToEvents(FixedTransformer):
                 if str(e) == "Could not find any of the events you specified.":
                     return np.zeros((0, 3), dtype="int32")
                 raise e
+        return events
+
+    def transform(self, raw, y=None):
+        events = self._find_events(raw)
+        return _unsafe_pick_events(events, list(self.event_id.values()))
+    
+
+class FindBIDSEvents(FixedTransformer):
+    """
+    Always returns an array for shape (n_events, 3), even if no events found
+    """
+
+    def __init__(self, event_id: dict[str, int], interval: Tuple[float, float], layout):
+        assert isinstance(event_id, dict)  # not None
+        self.event_id = event_id
+        self.interval = interval
+        self.layout = layout
+
+    def _find_events(self, raw):
+        sfreq = raw.info["sfreq"]
+        BIDS_file = raw.info['temp']['bids_file'] # This is set in the read_raw function of the BIDS dataset
+        subj = BIDS_file.entities["subject"]
+        run = BIDS_file.entities["run"]
+        events_file = self.layout.get(suffix='events', subject=subj, run=run)[0].path
+        events_df = pd.read_csv(events_file, sep="\t")
+
+        events_df = events_df[events_df['flag'] == "video"]
+        onset = events_df['onset'].values * sfreq
+        description = events_df['trial_type'].apply(lambda x: self.event_id[x]).values
+
+        events = np.vstack([onset, np.zeros_like(onset), description]).T
+        events = events.astype(int)
         return events
 
     def transform(self, raw, y=None):

@@ -13,3 +13,4 @@ from moabb.paradigms.motor_imagery import *
 from moabb.paradigms.p300 import *
 from moabb.paradigms.resting_state import *
 from moabb.paradigms.ssvep import *
+from moabb.paradigms.emotion_recognition import *
